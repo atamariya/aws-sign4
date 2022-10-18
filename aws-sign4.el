@@ -20,17 +20,8 @@
 
 (require 'hmac)
 
-(defun ensure-octets (data)
-  (if (stringp data)
-      data;(flex:string-to-octets data :external-format :utf-8)
-    data))
-
 (defun hash (data)
   (secure-hash 'sha256 data))
-
-(defun hex-encode (bytes)
-  ;; (format "%x" bytes)
-  bytes)
 
 (defun create-canonical-path (path)
   (let ((input (split-string path "/"))
@@ -105,7 +96,7 @@
     (insert signed-headers)
     (insert "\n")
     ;; Payload
-    (insert (hex-encode (hash (ensure-octets (or payload "")))))
+    (insert (hash (or payload "")))
     (buffer-string)))
 
 (defun string-to-sign (request-date credential-scope canonical-request)
@@ -116,18 +107,19 @@
     (insert "\n")
     (insert credential-scope)
     (insert "\n")
-    (insert (hex-encode (hash (ensure-octets canonical-request))))
+    (insert (hash canonical-request))
     (buffer-string)))
 
 (defun hmac1 (key data &optional binary)
   (hmac 'sha256 key data binary))
 
 (defun calculate-signature (k-secret string-to-sign date region service)
-  (let* ((k-date (hmac1 (concat "AWS4" k-secret) date t))
-         (k-region (hmac1 k-date region t))
-         (k-service (hmac1 k-region service t))
-         (k-signing (hmac1 k-service "aws4_request" t)))
-    (hmac1 k-signing string-to-sign)))
+  (with-coding-priority '(iso-8859-1)
+    (let* ((k-date (hmac1 (concat "AWS4" k-secret) date t))
+           (k-region (hmac1 k-date region t))
+           (k-service (hmac1 k-region service t))
+           (k-signing (hmac1 k-service "aws4_request" t)))
+      (hmac1 k-signing string-to-sign))))
 
 (defvar *aws-credentials* nil)
 
@@ -144,7 +136,7 @@
          (path (or (plist-get request :path) "/"))
          (params (plist-get request :params))
          (headers (plist-get request :headers))
-         (payload (plist-get request :payload))
+         (payload (or (plist-get request :payload) ""))
          (request-date (plist-get request :request-date))
          (expires (plist-get request :expires))
          (scheme (or (plist-get request :scheme) "https"))
@@ -154,10 +146,8 @@
     (check-type service (and (not null) (or symbol string))
 		"an AWS service designator")
     (check-type path string)
-    (let* ((x-amz-date "20221018T072146Z"
-		       ;; "20170908T121925Z"
-		       ;; (format-time-string "%Y%m%dT%H%M%SZ"))
-		       )
+    (let* ((x-amz-date (or request-date
+			   (format-time-string "%Y%m%dT%H%M%SZ" nil "UTC0")))
            (scope-date (substring x-amz-date 0 8))
            (region (downcase region))
            (service (etypecase service
@@ -167,8 +157,7 @@
 				     scope-date region service)))
       (unless host
         (error "Error in arguments to aws-sign4. Missing host."))
-      (unless (assoc "host" headers)
-	(push (cons "host" host) headers))
+      (push (cons "Host" host) headers)
       (unless expires
         (pushnew (cons "x-amz-date" x-amz-date) headers
 		 :key #'car :test #'string-equal))
