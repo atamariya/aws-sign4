@@ -51,7 +51,9 @@
 		   collect (format "%s=%s"
 				   (url-encode-url key)
 				   (url-hexify-string
-				    (format "%s" value))))
+				    (format "%s"
+					    (if (listp value)
+						(car value) value)))))
 	      "&"))
 
 (defun trimall (string)
@@ -131,12 +133,12 @@
 (defun aws-sign4 (&rest request)
   (let* ((region (plist-get request :region))
          (service (plist-get request :service))
-         (method (or (plist-get request :method) "GET"))
          (host (plist-get request :host))
          (path (or (plist-get request :path) "/"))
          (params (plist-get request :params))
          (headers (plist-get request :headers))
-         (payload (or (plist-get request :payload) ""))
+         (payload (plist-get request :payload))
+         (method (if payload "POST" "GET"))
          (request-date (plist-get request :request-date))
          (expires (plist-get request :expires))
          (scheme (or (plist-get request :scheme) "https"))
@@ -204,6 +206,41 @@
            credential-scope
            signed-headers
            signature))))
+    ))
+
+(defun aws-url-retrieve (url &optional auth-header region payload headers)
+  (let* ((url-obj (url-generic-parse-url url))
+	 (service (and (string-match "\\." (url-host url-obj))
+		       (substring (url-host url-obj) 0 (match-beginning 0))))
+	 (fullpath (url-path-and-query url-obj))
+	 (path (car fullpath))
+	 (query (if (cdr fullpath)
+		    (reverse (url-parse-query-string (cdr fullpath)))))
+	 (url-request-method (if payload "POST" "GET"))
+
+	 (auth (aws-sign4 :region (or region "us-east-1")
+			  :service service
+			  :host (url-host url-obj)
+			  :path path
+			  :params query
+			  :payload payload
+			  :headers headers
+			  ;; :request-date "20221021T070304Z"
+			  :expires (unless auth-header 300)
+			  )))
+    ;; (message "%s" auth)
+
+    (with-current-buffer
+	(if (or auth-header payload)
+	    (let* ((url-request-extra-headers
+		    (append headers
+			    `(("Authorization" . ,(car auth))
+			      ("x-amz-date" . ,(nth 1 auth))
+			      )))
+		   (url-request-data payload))
+	      (url-retrieve-synchronously url))
+	  (url-retrieve-synchronously (car auth)))
+      (buffer-string))
     ))
 
 (provide 'aws-sign4)
