@@ -138,7 +138,8 @@
          (params (plist-get request :params))
          (headers (plist-get request :headers))
          (payload (plist-get request :payload))
-         (method (if payload "POST" "GET"))
+         (method (or (plist-get request :method)
+		     (if payload "POST" "GET")))
          (request-date (plist-get request :request-date))
          (expires (plist-get request :expires))
          (scheme (or (plist-get request :scheme) "https"))
@@ -208,15 +209,17 @@
            signature))))
     ))
 
-(defun aws-url-retrieve (url &optional auth-header region payload headers)
+(defun aws-url-retrieve (url &optional auth-header region payload headers
+			     service method)
   (let* ((url-obj (url-generic-parse-url url))
-	 (service (and (string-match "\\." (url-host url-obj))
-		       (substring (url-host url-obj) 0 (match-beginning 0))))
+	 (service (or service
+		      (and (string-match "\\." (url-host url-obj))
+			   (substring (url-host url-obj) 0 (match-beginning 0)))))
 	 (fullpath (url-path-and-query url-obj))
 	 (path (car fullpath))
 	 (query (if (cdr fullpath)
 		    (reverse (url-parse-query-string (cdr fullpath)))))
-	 (url-request-method (if payload "POST" "GET"))
+	 (url-request-method (or method (if payload "POST" "GET")))
 
 	 (auth (aws-sign4 :region (or region "us-east-1")
 			  :service service
@@ -225,6 +228,7 @@
 			  :params query
 			  :payload payload
 			  :headers headers
+			  :method method
 			  ;; :request-date "20221021T070304Z"
 			  :expires (unless auth-header 300)
 			  )))
